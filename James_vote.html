@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>真道之煉：團體決策版</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #2c2c2c;
+            --card-bg: #f4e4bc;
+            --text-color: #3b2f2f;
+            --accent-color: #8b0000;
+            --btn-bg: #5d4037;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            font-family: "Songti TC", "Noto Serif TC", serif;
+            margin: 0;
+            padding: 20px;
+            color: white;
+            text-align: center;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        /* 狀態卡片 */
+        .card {
+            background-color: var(--card-bg);
+            color: var(--text-color);
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        h1, h2 { text-align: center; color: var(--accent-color); }
+        
+        .stats-bar {
+            display: flex;
+            justify-content: space-around;
+            background: rgba(0,0,0,0.1);
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .vote-bar-container {
+            margin-top: 15px;
+            background: #ddd;
+            height: 25px;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .vote-bar-fill {
+            height: 100%;
+            background: var(--accent-color);
+            width: 0%;
+            transition: width 0.5s;
+        }
+
+        .vote-count {
+            position: absolute;
+            right: 10px;
+            top: 2px;
+            font-size: 0.8em;
+            color: #fff;
+            text-shadow: 1px 1px 2px black;
+        }
+
+        button {
+            background-color: var(--btn-bg);
+            color: #fff;
+            border: none;
+            padding: 15px;
+            width: 100%;
+            margin-top: 10px;
+            border-radius: 5px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        button:hover { background-color: #795548; }
+        button:disabled { background-color: #999; cursor: not-allowed; }
+
+        #qrcode {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+            padding: 10px;
+            background: white;
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+            border-radius: 5px;
+        }
+
+        .hidden { display: none; }
+        
+        /* 投票者介面特別樣式 */
+        .voter-mode .story-text { font-size: 0.9em; color: #555; }
+        .voter-mode h1 { font-size: 1.5em; }
+
+        .waiting-screen {
+            text-align: center;
+            padding: 50px;
+            font-style: italic;
+        }
+
+        .log-area {
+            font-size: 0.8em;
+            color: #888;
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    
+    <div id="lobby-screen">
+        <h1>🏛️ 真道之煉：多人連線版</h1>
+        <div class="card" style="text-align: center;">
+            <p>請選擇您的身份</p>
+            <button onclick="startAsHost()">我是主持人 (電腦/大螢幕)</button>
+            <p style="font-size: 0.8em; color: #666; margin-top: 10px;">(請確保將此檔案上傳至網路空間，手機才能連入)</p>
+        </div>
+    </div>
+
+    <div id="host-screen" class="hidden">
+        <div class="card">
+            <h2>📡 等待會眾加入...</h2>
+            <p style="text-align: center;">請參加者掃描此 QR Code 加入遊戲：</p>
+            <div id="qrcode"></div>
+            <p style="text-align: center;">目前連線人數: <span id="connection-count">0</span> 人</p>
+            <button onclick="startGame()">開始遊戲</button>
+        </div>
+    </div>
+
+    <div id="game-screen" class="hidden">
+        <div class="card">
+            <div class="stats-bar">
+                <span>🕊️ 智慧: <span id="stat-w">5</span></span>
+                <span>🔥 信心: <span id="stat-f">5</span></span>
+            </div>
+            <div id="story-content" class="story-text"></div>
+        </div>
+
+        <div id="choices-area" class="card">
+            </div>
+    </div>
+
+    <div id="waiting-screen" class="hidden card waiting-screen">
+        <h3>⏳ 請看大螢幕...</h3>
+        <p>正在等待主持人推進劇情</p>
+    </div>
+
+    <div class="log-area" id="status-log">系統準備就緒...</div>
+</div>
+
+<script>
+    // --- 遊戲資料庫 (與之前相同) ---
+    const scenes = {
+        'start': {
+            text: `【第一幕：試煉的風暴】<br>冰雹摧毀了葡萄園。西門憤怒地喊道：「禱告有何用？不如去借高利貸！」<br>身為長老，你決定：`,
+            choices: [
+                { id: 0, text: "安撫眾人，教導在試煉中喜樂", effect: { w: 2, f: 1 }, next: "chapter2_good" },
+                { id: 1, text: "順應民意，去找地主借貸", effect: { w: 0, f: -2 }, next: "chapter2_debt" },
+                { id: 2, text: "嚴厲斥責，認為這是神的懲罰", effect: { w: -2, f: 0 }, next: "chapter2_conflict" }
+            ]
+        },
+        'chapter2_good': {
+            text: `【第二幕：外貌待人】<br>聚會時，執事請富人坐上座，卻叫窮人坐腳凳邊。你會：`,
+            choices: [
+                { id: 0, text: "介入，教導不可按外貌待人", effect: { w: 2, f: 2 }, next: "chapter3" },
+                { id: 1, text: "默許，為了爭取富人資助", effect: { w: -1, f: -2 }, next: "chapter3" }
+            ]
+        },
+        'chapter2_debt': {
+            text: `【第二幕：富人的壓迫】<br>債主在聚會中羞辱欠債的窮弟兄。你怎麼做？`,
+            choices: [
+                { id: 0, text: "保持沈默，避免惹怒債主", effect: { w: -1, f: -2 }, next: "chapter3_weak" },
+                { id: 1, text: "勇敢指出富人的錯誤", effect: { w: 1, f: 3 }, next: "chapter3" }
+            ]
+        },
+        'chapter2_conflict': {
+            text: `【第二幕：聽道與行道】<br>會眾只重儀式不願助人。有人說：「有信心就夠了」。你教導：`,
+            choices: [
+                { id: 0, text: "信心沒有行為是死的", effect: { w: 1, f: 2 }, next: "chapter3" },
+                { id: 1, text: "只要神學正確就好", effect: { w: 1, f: -1 }, next: "chapter3_weak" }
+            ]
+        },
+        'chapter3': {
+            text: `【第三幕：舌頭的火】<br>兩位教師爭吵，互相咒詛。你如何平息？`,
+            choices: [
+                { id: 0, text: "用權威壓倒他們", effect: { w: -3, f: -1 }, next: "ending" },
+                { id: 1, text: "溫柔勸勉，尋求上頭的智慧", effect: { w: 3, f: 1 }, next: "ending" }
+            ]
+        },
+        'chapter3_weak': {
+            text: `【第三幕：論斷與驕傲】<br>大家互相論斷，且驕傲地計劃將來。你說：`,
+            choices: [
+                { id: 0, text: "你們當說：主若願意...", effect: { w: 2, f: 1 }, next: "ending" },
+                { id: 1, text: "隨他們去吧", effect: { w: -2, f: -2 }, next: "ending" }
+            ]
+        },
+        'ending': { text: "結局生成中...", choices: [] }
+    };
+
+    // --- 系統變數 ---
+    let myPeer = null;
+    let hostConn = null; // 玩家端：連接到主機的連線
+    let clientConns = []; // 主機端：所有玩家連線
+    let isHost = false;
+    
+    let gameState = {
+        wisdom: 5,
+        faith: 5,
+        currentSceneId: 'start',
+        votes: {} // { choiceId: count }
+    };
+
+    // --- 初始化 ---
+    // 檢查網址是否有 ?host=ID，若有則自動進入玩家模式
+    window.onload = () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const hostId = urlParams.get('host');
+        if (hostId) {
+            startAsVoter(hostId);
+        }
+    };
+
+    function log(msg) {
+        document.getElementById('status-log').innerText = msg;
+        console.log(msg);
+    }
+
+    // --- 主持人邏輯 ---
+    function startAsHost() {
+        isHost = true;
+        document.getElementById('lobby-screen').classList.add('hidden');
+        document.getElementById('host-screen').classList.remove('hidden');
+        
+        // 初始化 Peer (隨機 ID)
+        myPeer = new Peer(generateRandomId(), { debug: 2 });
+
+        myPeer.on('open', (id) => {
+            log(`主機已建立，ID: ${id}`);
+            // 生成 QR Code
+            const joinUrl = `${window.location.href.split('?')[0]}?host=${id}`;
+            new QRCode(document.getElementById("qrcode"), {
+                text: joinUrl,
+                width: 180,
+                height: 180
+            });
+        });
+
+        myPeer.on('connection', (conn) => {
+            clientConns.push(conn);
+            updateConnectionCount();
+            
+            conn.on('data', (data) => {
+                handleDataFromClient(data);
+            });
+
+            conn.on('close', () => {
+                clientConns = clientConns.filter(c => c !== conn);
+                updateConnectionCount();
+            });
+            
+            // 若遊戲已經開始，傳送當前狀態給新加入者
+            if(!document.getElementById('game-screen').classList.contains('hidden')) {
+                 sendStateToClient(conn);
+            }
+        });
+    }
+
+    function updateConnectionCount() {
+        document.getElementById('connection-count').innerText = clientConns.length;
+    }
+
+    function startGame() {
+        document.getElementById('host-screen').classList.add('hidden');
+        document.getElementById('game-screen').classList.remove('hidden');
+        renderSceneHost('start');
+    }
+
+    function renderSceneHost(sceneId) {
+        gameState.currentSceneId = sceneId;
+        gameState.votes = {}; // 重置投票
+
+        // 渲染主機畫面
+        if (sceneId === 'ending') {
+            showEndingHost();
+            broadcast({ type: 'SCENE', sceneId: 'ending', text: document.getElementById('story-content').innerHTML });
+            return;
+        }
+
+        const scene = scenes[sceneId];
+        document.getElementById('story-content').innerHTML = scene.text;
+        updateStatsUI();
+
+        const choicesArea = document.getElementById('choices-area');
+        choicesArea.innerHTML = `<h3>📊 即時投票結果</h3>`;
+        
+        scene.choices.forEach((choice, index) => {
+            // 創建投票條
+            const div = document.createElement('div');
+            div.innerHTML = `
+                <div style="margin-bottom: 5px;">${choice.text}</div>
+                <div class="vote-bar-container">
+                    <div id="bar-${index}" class="vote-bar-fill"></div>
+                    <span id="count-${index}" class="vote-count">0 票</span>
+                </div>
+            `;
+            choicesArea.appendChild(div);
+            gameState.votes[index] = 0;
+        });
+
+        // 添加「結算」按鈕
+        const nextBtn = document.createElement('button');
+        nextBtn.innerText = "🛑 停止投票並結算 (選擇最高票)";
+        nextBtn.style.backgroundColor = "#d32f2f";
+        nextBtn.style.marginTop = "20px";
+        nextBtn.onclick = concludeVote;
+        choicesArea.appendChild(nextBtn);
+
+        // 廣播給所有玩家
+        broadcast({
+            type: 'SCENE',
+            sceneId: sceneId,
+            text: scene.text,
+            choices: scene.choices
+        });
+    }
+
+    function handleDataFromClient(data) {
+        if (data.type === 'VOTE') {
+            const choiceId = data.choiceId;
+            gameState.votes[choiceId] = (gameState.votes[choiceId] || 0) + 1;
+            updateVoteUI();
+        }
+    }
+
+    function updateVoteUI() {
+        const totalVotes = Object.values(gameState.votes).reduce((a, b) => a + b, 0);
+        for (let id in gameState.votes) {
+            const count = gameState.votes[id];
+            const percent = totalVotes === 0 ? 0 : (count / totalVotes) * 100;
+            
+            const bar = document.getElementById(`bar-${id}`);
+            const text = document.getElementById(`count-${id}`);
+            if (bar) bar.style.width = `${percent}%`;
+            if (text) text.innerText = `${count} 票`;
+        }
+    }
+
+    function concludeVote() {
+        // 找出最高票
+        let maxVotes = -1;
+        let winnerId = 0;
+        
+        // 簡單邏輯：若平票取第一個，若無人投取第一個
+        for (let id in gameState.votes) {
+            if (gameState.votes[id] > maxVotes) {
+                maxVotes = gameState.votes[id];
+                winnerId = id;
+            }
+        }
+        
+        const scene = scenes[gameState.currentSceneId];
+        const choice = scene.choices[winnerId];
+        
+        alert(`投票結果：${choice.text}`);
+        
+        // 更新數值
+        gameState.wisdom += choice.effect.w;
+        gameState.faith += choice.effect.f;
+        
+        // 進入下一幕
+        renderSceneHost(choice.next);
+    }
+
+    // --- 玩家 (Voter) 邏輯 ---
+    function startAsVoter(hostId) {
+        document.getElementById('lobby-screen').classList.add('hidden');
+        document.body.classList.add('voter-mode');
+        document.getElementById('waiting-screen').classList.remove('hidden');
+        log("正在連線到主機...");
+
+        myPeer = new Peer({ debug: 2 }); // 自動生成 ID
+
+        myPeer.on('open', () => {
+            hostConn = myPeer.connect(hostId);
+            
+            hostConn.on('open', () => {
+                log("已連線！等待遊戲開始...");
+                document.getElementById('waiting-screen').querySelector('h3').innerText = "✅ 已連線";
+            });
+
+            hostConn.on('data', (data) => {
+                handleDataFromHost(data);
+            });
+            
+            hostConn.on('close', () => {
+                alert("與主持人斷線");
+                location.reload();
+            });
+        });
+    }
+
+    function handleDataFromHost(data) {
+        if (data.type === 'SCENE') {
+            if (data.sceneId === 'ending') {
+                document.getElementById('waiting-screen').classList.add('hidden');
+                document.getElementById('game-screen').classList.remove('hidden');
+                document.getElementById('story-content').innerHTML = data.text;
+                document.getElementById('choices-area').innerHTML = "";
+                return;
+            }
+
+            // 顯示題目與選項
+            document.getElementById('waiting-screen').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            
+            document.getElementById('story-content').innerHTML = data.text;
+            
+            const optionsDiv = document.getElementById('choices-area');
+            optionsDiv.innerHTML = '';
+            
+            data.choices.forEach((choice, index) => {
+                const btn = document.createElement('button');
+                btn.innerText = choice.text;
+                btn.onclick = () => {
+                    sendVote(index);
+                    // 鎖定按鈕避免重複投
+                    const allBtns = optionsDiv.querySelectorAll('button');
+                    allBtns.forEach(b => b.disabled = true);
+                    btn.innerText += " (已送出)";
+                    btn.style.backgroundColor = "#2e7d32";
+                };
+                optionsDiv.appendChild(btn);
+            });
+        }
+    }
+
+    function sendVote(choiceId) {
+        hostConn.send({ type: 'VOTE', choiceId: choiceId });
+        document.getElementById('status-log').innerText = "投票已送出，等待結果...";
+    }
+
+    // --- 工具函數 ---
+    function broadcast(data) {
+        clientConns.forEach(conn => {
+            if(conn.open) conn.send(data);
+        });
+    }
+
+    function sendStateToClient(conn) {
+        // 簡單版：只要不是 ending，就重發一次當前場景
+        const sceneId = gameState.currentSceneId;
+        if (scenes[sceneId]) {
+            conn.send({
+                type: 'SCENE',
+                sceneId: sceneId,
+                text: scenes[sceneId].text,
+                choices: scenes[sceneId].choices
+            });
+        }
+    }
+
+    function updateStatsUI() {
+        document.getElementById('stat-w').innerText = gameState.wisdom;
+        document.getElementById('stat-f').innerText = gameState.faith;
+    }
+
+    function showEndingHost() {
+        let title, desc, verse;
+        // 判斷結局邏輯 (與單人版相同)
+        const w = gameState.wisdom;
+        const f = gameState.faith;
+
+        if (w >= 8 && f >= 8) {
+            title = "結局：聽道且行道的人";
+            desc = "教會在試煉中被煉淨，成為社區的光。";
+            verse = "(雅 2:26)";
+        } else if (f < 4) {
+            title = "結局：死的信心";
+            desc = "教會雖然存活，卻失去了屬靈的力量，與世俗無異。";
+            verse = "(雅 2:17)";
+        } else if (w < 4) {
+            title = "結局：屬地的紛爭";
+            desc = "血氣與嚴厲導致了教會的分裂。";
+            verse = "(雅 4:1)";
+        } else {
+            title = "結局：在軟弱中成長";
+            desc = "雖然跌跌撞撞，但神仍在動工。";
+            verse = "(雅 1:12)";
+        }
+
+        const html = `
+            <h2 style="color:var(--accent-color)">${title}</h2>
+            <p>${desc}</p>
+            <p><b>${verse}</b></p>
+            <p>最終數值 - 智慧: ${w} | 信心: ${f}</p>
+            <button onclick="location.reload()">重新開始</button>
+        `;
+        
+        document.getElementById('story-content').innerHTML = html;
+        document.getElementById('choices-area').innerHTML = '';
+    }
+
+    function generateRandomId() {
+        return Math.random().toString(36).substring(2, 6).toUpperCase();
+    }
+
+</script>
+
+</body>
+</html>
